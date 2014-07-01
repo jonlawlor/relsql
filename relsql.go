@@ -4,10 +4,13 @@
 package relcsv
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
 	"github.com/jonlawlor/rel"
 	"reflect"
+	"strings"
+	"text/template"
 )
 
 // New creates a relation that reads from an sql table, with one tuple per row.
@@ -42,7 +45,7 @@ type sqlTable struct {
 	// the columns available in the table
 	colNames []string
 
-	// sqlzero and columns should always have the same number of fields
+	// colNames and zero should always represent the same number of fields
 
 	// the type of the tuples returned by the relation
 	zero interface{}
@@ -58,6 +61,29 @@ type sqlTable struct {
 	err error
 }
 
+// selectStatement is a very simple sql select statement.  This will be
+// replaced with a more general verion(s) to allow relsql to perform query
+// rewrite using restrict, join, union, and diff.  I'm not sure if it will ever
+// use rewrite for map and groupby.  Maybe It should depend upon sqlx, for the
+// parameters?
+type selectStatement struct {
+	SourceDistinct bool
+	ColNames       string
+	TableName      string
+}
+
+// queryString constructs a query string from a selectStatement.
+func (s *selectStatement) queryString() (str string, err error) {
+	const selectTemplate = "SELECT{{if .SourceDistinct}} {{else}} DISTINCT {{end}}{{.ColNames}} FROM {{.TableName}}"
+	var b bytes.Buffer
+	t := template.Must(template.New("select").Parse(selectTemplate))
+	err = t.Execute(&b, s)
+	str = b.String()
+	return
+}
+
+// TupleChan returns the tuples from the sql query represented by the relation
+// in a channel.
 func (r *sqlTable) TupleChan(t interface{}) chan<- struct{} {
 	cancel := make(chan struct{})
 	// reflect on the channel
@@ -71,6 +97,56 @@ func (r *sqlTable) TupleChan(t interface{}) chan<- struct{} {
 		chv.Close()
 		return cancel
 	}
+	go func(db *sql.DB, res reflect.Value) {
+		// construct the select query string
+		q, err := (&selectStatement{r.sourceDistinct, strings.Join(r.colNames, ", "), r.tableName}).queryString()
+		if err != nil {
+			r.err = err
+			res.Close()
+			return
+		}
+
+		// execute the query
+		rows, err := db.Query(q)
+		if err != nil {
+			r.err = err
+			res.Close()
+			return
+		}
+
+		e1 := reflect.TypeOf(r.zero)
+		resSel := reflect.SelectCase{reflect.SelectSend, res, reflect.Value{}}
+		canSel := reflect.SelectCase{reflect.SelectRecv, reflect.ValueOf(cancel), reflect.Value{}}
+		n := e1.NumField()
+		// assign the records to the result tuples
+		for rows.Next() {
+
+			// construct the result value
+			tup := reflect.Indirect(reflect.New(e1))
+			values := []interface{}{}
+
+			for i := 0; i < n; i++ {
+				values = append(values, tup.Field(i).Addr().Interface())
+			}
+
+			if err := rows.Scan(values...); err != nil {
+				r.err = err
+				res.Close()
+				return
+			}
+			// send the value on the results channel, or cancel
+			resSel.Send = tup
+			chosen, _, _ := reflect.Select([]reflect.SelectCase{canSel, resSel})
+			if chosen == 0 {
+				// cancel has been closed, so close the query results
+				rows.Close()
+				return
+			}
+		}
+		rows.Close()
+		res.Close()
+	}(r.db, chv)
+
 	return cancel
 }
 

@@ -34,7 +34,7 @@ func colNames(v interface{}) []string {
 	return names
 }
 
-// sqlTable is an implementation of Relation using a csv.Reader
+// sqlTable is an implementation of Relation using an sql.DB
 type sqlTable struct {
 	// the *sql.DB connection, produced by an sql driver
 	db *sql.DB
@@ -106,8 +106,17 @@ func (r *sqlTable) TupleChan(t interface{}) chan<- struct{} {
 			return
 		}
 
+		// start a transaction
+		tx, err := db.Begin()
+		if err != nil {
+			r.err = err
+			res.Close()
+			return
+		}
+
 		// execute the query
-		rows, err := db.Query(q)
+		rows, err := tx.Query(q)
+
 		if err != nil {
 			r.err = err
 			res.Close()
@@ -131,7 +140,9 @@ func (r *sqlTable) TupleChan(t interface{}) chan<- struct{} {
 
 			if err := rows.Scan(values...); err != nil {
 				r.err = err
+				tx.Commit()
 				res.Close()
+
 				return
 			}
 			// send the value on the results channel, or cancel
@@ -139,10 +150,12 @@ func (r *sqlTable) TupleChan(t interface{}) chan<- struct{} {
 			chosen, _, _ := reflect.Select([]reflect.SelectCase{canSel, resSel})
 			if chosen == 0 {
 				// cancel has been closed, so close the query results
+				tx.Commit()
 				rows.Close()
 				return
 			}
 		}
+		tx.Commit()
 		rows.Close()
 		res.Close()
 	}(r.db, chv)

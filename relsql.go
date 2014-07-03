@@ -124,8 +124,8 @@ func (r *sqlTable) TupleChan(t interface{}) chan<- struct{} {
 		}
 
 		e1 := reflect.TypeOf(r.zero)
-		resSel := reflect.SelectCase{reflect.SelectSend, res, reflect.Value{}}
-		canSel := reflect.SelectCase{reflect.SelectRecv, reflect.ValueOf(cancel), reflect.Value{}}
+		resSel := reflect.SelectCase{Dir: reflect.SelectSend, Chan: res}
+		canSel := reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(cancel)}
 		n := e1.NumField()
 		// assign the records to the result tuples
 		for rows.Next() {

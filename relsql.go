@@ -1,7 +1,7 @@
 // Package relsql implements a rel.Relation object that uses sql.DB.
 // The name is nonstandard go because callers would always have to use a type
 // alias to construct one otherwise.
-package relcsv
+package relsql
 
 import (
 	"bytes"
@@ -84,24 +84,24 @@ func (s *selectStatement) queryString() (str string, err error) {
 
 // TupleChan returns the tuples from the sql query represented by the relation
 // in a channel.
-func (r *sqlTable) TupleChan(t interface{}) chan<- struct{} {
+func (r1 *sqlTable) TupleChan(t interface{}) chan<- struct{} {
 	cancel := make(chan struct{})
 	// reflect on the channel
 	chv := reflect.ValueOf(t)
-	err := rel.EnsureChan(chv.Type(), r.zero)
+	err := rel.EnsureChan(chv.Type(), r1.zero)
 	if err != nil {
-		r.err = err
+		r1.err = err
 		return cancel
 	}
-	if r.err != nil {
+	if r1.err != nil {
 		chv.Close()
 		return cancel
 	}
 	go func(db *sql.DB, res reflect.Value) {
 		// construct the select query string
-		q, err := (&selectStatement{r.sourceDistinct, strings.Join(r.colNames, ", "), r.tableName}).queryString()
+		q, err := (&selectStatement{r1.sourceDistinct, strings.Join(r1.colNames, ", "), r1.tableName}).queryString()
 		if err != nil {
-			r.err = err
+			r1.err = err
 			res.Close()
 			return
 		}
@@ -109,7 +109,7 @@ func (r *sqlTable) TupleChan(t interface{}) chan<- struct{} {
 		// start a transaction
 		tx, err := db.Begin()
 		if err != nil {
-			r.err = err
+			r1.err = err
 			res.Close()
 			return
 		}
@@ -118,12 +118,12 @@ func (r *sqlTable) TupleChan(t interface{}) chan<- struct{} {
 		rows, err := tx.Query(q)
 
 		if err != nil {
-			r.err = err
+			r1.err = err
 			res.Close()
 			return
 		}
 
-		e1 := reflect.TypeOf(r.zero)
+		e1 := reflect.TypeOf(r1.zero)
 		resSel := reflect.SelectCase{Dir: reflect.SelectSend, Chan: res}
 		canSel := reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(cancel)}
 		n := e1.NumField()
@@ -139,7 +139,7 @@ func (r *sqlTable) TupleChan(t interface{}) chan<- struct{} {
 			}
 
 			if err := rows.Scan(values...); err != nil {
-				r.err = err
+				r1.err = err
 				tx.Commit()
 				res.Close()
 
@@ -158,29 +158,29 @@ func (r *sqlTable) TupleChan(t interface{}) chan<- struct{} {
 		tx.Commit()
 		rows.Close()
 		res.Close()
-	}(r.db, chv)
+	}(r1.db, chv)
 
 	return cancel
 }
 
 // Zero returns the zero value of the relation (a blank tuple)
-func (r *sqlTable) Zero() interface{} {
-	return r.zero
+func (r1 *sqlTable) Zero() interface{} {
+	return r1.zero
 }
 
 // CKeys is the set of candidate keys in the relation
-func (r *sqlTable) CKeys() rel.CandKeys {
-	return r.cKeys
+func (r1 *sqlTable) CKeys() rel.CandKeys {
+	return r1.cKeys
 }
 
 // GoString returns a text representation of the Relation
-func (r *sqlTable) GoString() string {
-	return fmt.Sprintf("relsql.sqlTable{sql.DB, %s, %v, %v, %v, %v, %v}", r.tableName, r.colNames, r.zero, r.cKeys, r.sourceDistinct, r.err)
+func (r1 *sqlTable) GoString() string {
+	return fmt.Sprintf("relsql.sqlTable{sql.DB, %s, %v, %v, %v, %v, %v}", r1.tableName, r1.colNames, r1.zero, r1.cKeys, r1.sourceDistinct, r1.err)
 }
 
 // String returns a text representation of the Relation
-func (r *sqlTable) String() string {
-	return "Relation(" + rel.HeadingString(r) + ")"
+func (r1 *sqlTable) String() string {
+	return "Relation(" + rel.HeadingString(r1) + ")"
 }
 
 // Project creates a new relation with less than or equal degree

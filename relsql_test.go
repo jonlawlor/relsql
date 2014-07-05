@@ -1,6 +1,6 @@
 //relsql_test implements some tests for sql based relations
 
-package relcsv
+package relsql
 
 import (
 	"database/sql"
